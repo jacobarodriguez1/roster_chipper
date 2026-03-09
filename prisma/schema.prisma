@@ -1,0 +1,257 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum UploadStatus {
+  PENDING
+  VALIDATED
+  READY
+}
+
+enum IssueSeverity {
+  HARD_ERROR
+  WARNING
+}
+
+enum IssueStatus {
+  OPEN
+  RESOLVED
+  OVERRIDDEN
+}
+
+enum ScheduleVersionStatus {
+  DRAFT
+  ACTIVE
+}
+
+model Upload {
+  id              String            @id @default(cuid())
+  filename        String
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  status          UploadStatus      @default(PENDING)
+  rowCount        Int               @default(0)
+  stagedRows      StagedRow[]
+  cadetIdentities CadetIdentity[]
+  teams           Team[]
+  issues          Issue[]
+  scheduleConfigs ScheduleConfig[]
+  scheduleVersions ScheduleVersion[]
+}
+
+model StagedRow {
+  id             String   @id @default(cuid())
+  uploadId       String
+  rowNumber      Int
+  brigadeNumber  String
+  schoolOrUnit   String
+  category       String
+  division       String
+  teamNumber     String
+  cadetLastName  String
+  cadetFirstName String
+  cadetRank      String
+  cadetGender    String
+  cadetGrade     String
+  normalizedName String
+  createdAt      DateTime @default(now())
+  upload         Upload   @relation(fields: [uploadId], references: [id], onDelete: Cascade)
+  membership     TeamMembership?
+  issues         Issue[]
+
+  @@index([uploadId])
+  @@index([uploadId, normalizedName])
+}
+
+model CadetIdentity {
+  id                String   @id @default(cuid())
+  uploadId          String
+  canonicalLastName String
+  canonicalFirstName String
+  normalizedName    String
+  canonicalKey      String
+  isMerged          Boolean  @default(false)
+  mergedIntoId      String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  upload            Upload   @relation(fields: [uploadId], references: [id], onDelete: Cascade)
+  mergedInto        CadetIdentity? @relation("IdentityMerge", fields: [mergedIntoId], references: [id], onDelete: SetNull)
+  mergedFrom        CadetIdentity[] @relation("IdentityMerge")
+  memberships       TeamMembership[]
+  issues            Issue[]
+
+  @@index([uploadId, canonicalKey])
+}
+
+model Team {
+  id            String   @id @default(cuid())
+  uploadId      String
+  brigadeNumber String
+  schoolOrUnit  String
+  category      String
+  division      String
+  teamNumber    String
+  teamKey       String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  upload        Upload   @relation(fields: [uploadId], references: [id], onDelete: Cascade)
+  memberships   TeamMembership[]
+  slots         ScheduleSlot[]
+
+  @@unique([uploadId, teamKey])
+  @@index([uploadId, category, division])
+}
+
+model TeamMembership {
+  id              String   @id @default(cuid())
+  teamId          String
+  cadetIdentityId String
+  stagedRowId     String   @unique
+  createdAt       DateTime @default(now())
+  team            Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  cadetIdentity   CadetIdentity @relation(fields: [cadetIdentityId], references: [id], onDelete: Cascade)
+  stagedRow       StagedRow @relation(fields: [stagedRowId], references: [id], onDelete: Cascade)
+
+  @@index([teamId])
+  @@index([cadetIdentityId])
+}
+
+model Issue {
+  id              String      @id @default(cuid())
+  uploadId        String
+  stagedRowId     String?
+  cadetIdentityId String?
+  type            String
+  code            String
+  severity        IssueSeverity
+  status          IssueStatus  @default(OPEN)
+  message         String
+  detailsJson     String?
+  overrideReason  String?
+  brigadeNumber   String?
+  category        String?
+  division        String?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  upload          Upload       @relation(fields: [uploadId], references: [id], onDelete: Cascade)
+  stagedRow       StagedRow?   @relation(fields: [stagedRowId], references: [id], onDelete: SetNull)
+  cadetIdentity   CadetIdentity? @relation(fields: [cadetIdentityId], references: [id], onDelete: SetNull)
+  resolutions     IssueResolution[]
+
+  @@index([uploadId, severity, status])
+  @@index([uploadId, type])
+  @@index([stagedRowId])
+}
+
+model IssueResolution {
+  id         String   @id @default(cuid())
+  issueId    String
+  action     String
+  reason     String?
+  payloadJson String?
+  createdAt  DateTime @default(now())
+  issue      Issue    @relation(fields: [issueId], references: [id], onDelete: Cascade)
+
+  @@index([issueId])
+}
+
+model ScheduleConfig {
+  id               String   @id @default(cuid())
+  uploadId         String
+  startTime        String
+  endTime          String   @default("17:00")
+  defaultDuration  Int
+  padCount         Int
+  groupingWeight   Int      @default(70)
+  efficiencyWeight Int      @default(30)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  upload           Upload   @relation(fields: [uploadId], references: [id], onDelete: Cascade)
+  categoryConfigs  CategoryConfig[]
+  pads             Pad[]
+  versions         ScheduleVersion[]
+
+  @@index([uploadId, createdAt])
+}
+
+model CategoryConfig {
+  id               String   @id @default(cuid())
+  scheduleConfigId String
+  category         String
+  division         String?
+  durationMinutes  Int
+  createdAt        DateTime @default(now())
+  scheduleConfig   ScheduleConfig @relation(fields: [scheduleConfigId], references: [id], onDelete: Cascade)
+
+  @@index([scheduleConfigId, category, division])
+}
+
+model Pad {
+  id               String   @id @default(cuid())
+  scheduleConfigId String
+  name             String
+  basePad          String?
+  subLane          String?
+  isLocked         Boolean  @default(false)
+  laneOrder        Int
+  createdAt        DateTime @default(now())
+  scheduleConfig   ScheduleConfig @relation(fields: [scheduleConfigId], references: [id], onDelete: Cascade)
+  blocks           PadBlock[]
+  slots            ScheduleSlot[]
+
+  @@index([scheduleConfigId, laneOrder])
+}
+
+model PadBlock {
+  id        String   @id @default(cuid())
+  padId     String
+  startMin  Int
+  endMin    Int
+  reason    String
+  createdAt DateTime @default(now())
+  pad       Pad      @relation(fields: [padId], references: [id], onDelete: Cascade)
+
+  @@index([padId, startMin])
+}
+
+model ScheduleVersion {
+  id               String   @id @default(cuid())
+  uploadId         String
+  scheduleConfigId String
+  status           ScheduleVersionStatus @default(DRAFT)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  upload           Upload   @relation(fields: [uploadId], references: [id], onDelete: Cascade)
+  scheduleConfig   ScheduleConfig @relation(fields: [scheduleConfigId], references: [id], onDelete: Cascade)
+  slots            ScheduleSlot[]
+
+  @@index([uploadId, createdAt])
+}
+
+model ScheduleSlot {
+  id                String   @id @default(cuid())
+  scheduleVersionId String
+  teamId            String
+  padId             String
+  startMin          Int
+  endMin            Int
+  isManual          Boolean  @default(false)
+  isLocked          Boolean  @default(false)
+  notes             String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  scheduleVersion   ScheduleVersion @relation(fields: [scheduleVersionId], references: [id], onDelete: Cascade)
+  team              Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  pad               Pad      @relation(fields: [padId], references: [id], onDelete: Cascade)
+
+  @@index([scheduleVersionId, padId, startMin])
+  @@index([scheduleVersionId, teamId])
+}
